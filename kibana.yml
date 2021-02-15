@@ -1,7 +1,10 @@
 -   hosts: kibana
     tasks:
+    -   get_url:
+            url: https://artifacts.elastic.co/downloads/kibana/kibana-oss-7.10.2-amd64.deb
+            dest: /opt/kibana-oss-7.10.2-amd64.deb
     -   apt:
-            deb: https://artifacts.elastic.co/downloads/kibana/kibana-oss-7.10.2-amd64.deb
+            deb: /opt/kibana-oss-7.10.2-amd64.deb
     -   copy:
             dest: /etc/kibana/kibana.yml
             content: |

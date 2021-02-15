@@ -20,8 +20,11 @@
             state: directory
             owner: elasticsearch
             group: elasticsearch
+    -   get_url:
+            url: https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-oss-7.10.2-amd64.deb
+            dest: /opt/elasticsearch-oss-7.10.2-amd64.deb
     -   apt:
-            deb: https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-oss-7.10.2-amd64.deb
+            deb: /opt/elasticsearch-oss-7.10.2-amd64.deb
     -   copy:
             dest: /etc/elasticsearch/elasticsearch.yml
             content:
