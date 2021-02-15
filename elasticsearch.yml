@@ -1,0 +1,43 @@
+-   hosts: elasticsearch
+    gather_facts: no
+    tasks:
+    -   group:
+            name: elasticsearch
+            system: yes
+    -   user:
+            name: elasticsearch
+            system: yes
+    -   filesystem:
+            dev: /dev/vdb
+            fstype: ext4
+    -   mount:
+            path: /var/lib/elasticsearch
+            src: /dev/vdb
+            fstype: ext4
+            state: mounted
+    -   file:
+            path: /var/lib/elasticsearch
+            state: directory
+            owner: elasticsearch
+            group: elasticsearch
+    -   apt:
+            deb: https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-oss-7.10.2-amd64.deb
+    -   copy:
+            dest: /etc/elasticsearch/elasticsearch.yml
+            content:
+                path.data: /var/lib/elasticsearch
+                path.logs: /var/log/elasticsearch
+                cluster.name: logs
+                node.name: elasticsearch
+                network.host: 0.0.0.0
+                discovery.type: single-node
+        notify: restart elasticsearch
+    -   service:
+            name: elasticsearch
+            state: started
+            enabled: yes
+    handlers:
+    -   name: restart elasticsearch
+        service:
+            name: elasticsearch
+            state: restarted

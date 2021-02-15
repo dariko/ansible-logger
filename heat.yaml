@@ -1,0 +1,234 @@
+heat_template_version: 2018-08-31
+parameters:
+    network:
+        type: string
+        constraints:
+        -   custom_constraint: neutron.network
+    image:
+        type: string
+        constraints:
+        -   custom_constraint: glance.image
+    root_volume_size:
+        type: number
+        default: 10
+    root_volume_type:
+        type: string
+        default: ceph
+
+    elasticsearch_volume_type:
+        type: string
+        default: ceph
+    elasticsearch_volume_size:
+        type: number
+        default: 15
+
+    flavor_elasticsearch:
+        type: string
+        default: sys.2c4r
+    flavor_kibana:
+        type: string
+        default: sys.2c4r
+    flavor_rsyslog:
+        type: string
+        default: sys.2c2r
+
+    deploy_version:
+        type: string
+        default: master
+resources:
+    rsyslog_security_group:
+        type: OS::Neutron::SecurityGroup
+        properties:
+            rules:
+            -   protocol: tcp
+                port_range_min: 22
+                port_range_max: 22
+            -   protocol: tcp
+                port_range_min: 514
+                port_range_max: 514
+            -   protocol: udp
+                port_range_min: 514
+                port_range_max: 514
+            -   protocol: icmp
+
+    kibana_security_group:
+        type: OS::Neutron::SecurityGroup
+        properties:
+            rules:
+            -   protocol: tcp
+                port_range_min: 22
+                port_range_max: 22
+            -   protocol: tcp
+                port_range_min: 5601
+                port_range_max: 5601
+            -   protocol: icmp
+
+    elasticsearch_security_group:
+        type: OS::Neutron::SecurityGroup
+        properties:
+            rules:
+            -   protocol: tcp
+                port_range_min: 22
+                port_range_max: 22
+            -   protocol: tcp
+                port_range_min: 9200
+                port_range_max: 9200
+                remote_mode: remote_group_id
+                remote_group_id: {get_resource: kibana_security_group}
+            -   protocol: tcp
+                port_range_min: 9200
+                port_range_max: 9200
+                remote_mode: remote_group_id
+                remote_group_id: {get_resource: rsyslog_security_group}
+            -   protocol: udp
+                port_range_min: 9300
+                port_range_max: 9300
+                remote_mode: remote_group_id
+            -   protocol: icmp
+
+    keypair:
+        type: OS::Nova::KeyPair
+        properties:
+            save_private_key: yes
+            name: {list_join: ["-", ["ansible-runner", {get_param: OS::stack_id}]]}
+
+    rsyslog_port:
+        type: OS::Neutron::Port
+        properties:
+            network: {get_param: network}
+            security_groups:
+            -   {get_resource: rsyslog_security_group}
+
+    kibana_port:
+        type: OS::Neutron::Port
+        properties:
+            network: {get_param: network}
+            security_groups:
+            -   {get_resource: kibana_security_group}
+
+    elasticsearch_port:
+        type: OS::Neutron::Port
+        properties:
+            network: {get_param: network}
+            security_groups:
+            -   {get_resource: elasticsearch_security_group}
+
+    rsyslog_root_volume:
+        type: OS::Cinder::Volume
+        properties:
+            image: {get_param: image}
+            size: {get_param: root_volume_size}
+            volume_type: {get_param: root_volume_type}
+
+    elasticsearch_root_volume:
+        type: OS::Cinder::Volume
+        properties:
+            image: {get_param: image}
+            size: {get_param: root_volume_size}
+            volume_type: {get_param: root_volume_type}
+
+    kibana_root_volume:
+        type: OS::Cinder::Volume
+        properties:
+            image: {get_param: image}
+            size: {get_param: root_volume_size}
+            volume_type: {get_param: root_volume_type}
+
+    elasticsearch_data_volume:
+        type: OS::Cinder::Volume
+        properties:
+            size: {get_param: elasticsearch_volume_size}
+            volume_type: {get_param: elasticsearch_volume_type}
+
+    rsyslog_server:
+        type: OS::Nova::Server
+        properties:
+            networks:
+            -   port: {get_resource: rsyslog_port}
+            block_device_mapping:
+            block_device_mapping_v2:
+            -   volume_id: {get_resource: rsyslog_root_volume}
+            flavor: {get_param: flavor_rsyslog}
+            user_data_format: SOFTWARE_CONFIG
+            key_name: {get_resource: keypair}
+
+    elasticsearch_server:
+        type: OS::Nova::Server
+        properties:
+            networks:
+            -   port: {get_resource: elasticsearch_port}
+            block_device_mapping:
+            block_device_mapping_v2:
+            -   volume_id: {get_resource: elasticsearch_root_volume}
+            flavor: {get_param: flavor_elasticsearch}
+            user_data_format: SOFTWARE_CONFIG
+            key_name: {get_resource: keypair}
+
+    elasticsearch_data_volume_attachment:
+        type: OS::Cinder::VolumeAttachment
+        properties:
+            instance_uuid: {get_resource: elasticsearch_server}
+            volume_id: {get_resource: elasticsearch_data_volume}
+            mountpoint: /dev/vdb
+
+    kibana_server:
+        type: OS::Nova::Server
+        properties:
+            networks:
+            -   port: {get_resource: kibana_port}
+            block_device_mapping_v2:
+            -   volume_id: {get_resource: kibana_root_volume}
+            flavor: {get_param: flavor_kibana}
+            user_data_format: SOFTWARE_CONFIG
+            key_name: {get_resource: keypair}
+
+    ansible_runner:
+        type: Immobiliare::AnsibleRunner::v2
+        properties:
+            ssh_key:
+                get_attr:
+                -   keypair
+                -   private_key
+            inventory: 
+                str_replace:
+                    params:
+                        $rsyslog_ip: {get_attr: [rsyslog_port, fixed_ips, 0, ip_address]}
+                        $kibana_ip: {get_attr: [kibana_port, fixed_ips, 0, ip_address]}
+                        $elasticsearch_ip: {get_attr: [elasticsearch_port, fixed_ips, 0, ip_address]}
+                    template: |   
+                        [rsyslog]
+                        rsyslog1 ansible_host=$rsyslog_ip
+                        [kibana]
+                        kibana1 ansible_host=$kibana_ip
+                        [elasticsearch]
+                        elasticsearch1 ansible_host=$elasticsearch_ip
+            repository_url: https://github.com/dariko/ansible-logger
+            repository_version: {get_param: deploy_version}
+            playbook_name: site.yml
+
+outputs:
+    kibana_url:
+        value:
+            str_replace:
+                params:
+                    kibana_ip:
+                        get_attr:
+                        -   kibana_port
+                        -   fixed_ips
+                        -   0
+                        -   ip_address
+                template: http://kibana_ip:5601
+    kibana_address:
+        value:
+            get_attr:
+            -   kibana_port
+            -   fixed_ips
+            -   0
+            -   ip_address
+    rsyslog_address:
+        value:
+            get_attr:
+            -   rsyslog_port
+            -   fixed_ips
+            -   0
+            -   ip_address

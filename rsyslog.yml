@@ -1,0 +1,82 @@
+-   hosts: rsyslog
+    tasks:
+    -   apt:
+            name: rsyslog, rsyslog-elasticsearch
+    -   copy:
+            content: |
+                module(load="imtcp")
+                module(load="imudp")
+                module(load="omelasticsearch")
+                input(type="imtcp" port="514" ruleset="ruleset_elasticsearch_logs")
+                input(type="imudp" port="514" ruleset="ruleset_elasticsearch_logs")
+                template(name="elasticsearch_index_template" type="list") {
+                    constant(value="logs-")
+                    property(name="timereported" dateFormat="rfc3339" position.from="1" position.to="4")
+                    constant(value=".")
+                    property(name="timereported" dateFormat="rfc3339" position.from="6" position.to="7")
+                    constant(value=".")
+                    property(name="timereported" dateFormat="rfc3339" position.from="9" position.to="10")
+                }
+                template(name="elasticsearch_logs_template" type="list") {
+                    constant(value="{")
+                      constant(value="\"@timestamp\":\"")     property(name="timegenerated" dateFormat="rfc3339")
+                #      constant(value="\"@timestamp\":\"")     property(name="timereported" dateFormat="rfc3339")
+                      constant(value="\",\"@version\":\"1")
+                      constant(value="\",\"message\":\"")     property(name="msg" format="json")
+                      constant(value="\",\"sysloghost\":\"")  property(name="hostname")
+                      constant(value="\",\"severity\":\"")    property(name="syslogseverity-text")
+                      constant(value="\",\"facility\":\"")    property(name="syslogfacility-text")
+                      constant(value="\",\"programname\":\"") property(name="programname")
+                      constant(value="\",\"procid\":\"")      property(name="procid")
+                    constant(value="\"}\n")
+                }
+                ruleset(name="ruleset_elasticsearch_logs"
+                    queue.type="linkedlist"
+                    queue.size="5000000"
+                    queue.saveonshutdown="on") {
+                    action(
+                        name="action_elasticsearch_logs"
+                        type="omelasticsearch"
+                        server="{{hostvars['elasticsearch1'].ansible_host}}"
+                        serverport="9200"
+                        template="elasticsearch_logs_template"
+                        searchIndex="elasticsearch_index_template"
+                        searchType="events"
+                        bulkmode="on"
+                        action.resumeretrycount="-1"
+                        dynSearchIndex="on"
+                        queue.type="linkedlist"
+                        queue.filename="action_elasticsearch"
+                        queue.maxdiskspace="100m"
+                        queue.size="5000000"
+                        queue.saveonshutdown="on"
+                        queue.dequeuebatchsize="20000"
+                        queue.timeoutshutdown="2000"
+                    )    
+                }
+            dest: /etc/rsyslog-to-es.conf
+        notify: restart rsyslog-to-es
+    -   copy:
+            content: |
+                [Unit]
+                Description=rsyslog app
+                After=network.target
+                [Service]
+                ExecStart=/usr/sbin/rsyslogd -n -f /etc/rsyslog-to-es.conf -i /var/run/rsyslog-to-es.pid
+                Restart=on-failure
+                [Install]
+                WantedBy=multi-user.target
+            dest: /etc/systemd/system/rsyslog-to-es.service
+        notify: systemctl daemon-reload
+    -   service:
+            name: rsyslog-to-es
+            state: started
+            enabled: yes
+    handlers:
+    -   name: systemctl daemon-reload
+        shell: systemctl daemon-reload
+    -   name: restart rsyslog-to-es
+        service:
+            name: rsyslog-to-es
+            state: restarted
+

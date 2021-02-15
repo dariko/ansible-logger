@@ -1,0 +1,15 @@
+-   hosts: kibana
+    tasks:
+    -   apt:
+            deb: https://artifacts.elastic.co/downloads/kibana/kibana-oss-7.10.2-amd64.deb
+    -   copy:
+            dest: /etc/kibana/kibana.yml
+            content: |
+                elasticsearch.hosts: ["http://{{hostvars['elasticsearch1'].ansible_host}}:9200"]
+                server.host: "0.0.0.0"
+        notify: restart kibana
+    handlers:
+    -   name: restart kibana
+        service:
+            name: kibana
+            state: restarted
