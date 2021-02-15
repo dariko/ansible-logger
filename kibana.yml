@@ -1,4 +1,6 @@
 -   hosts: kibana
+    vars:
+        index_pattern_id: "c776bebf-9cad-4cf9-9490-0366a65270e6"
     tasks:
     -   get_url:
             url: https://artifacts.elastic.co/downloads/kibana/kibana-oss-7.10.2-amd64.deb
@@ -16,3 +18,31 @@
         service:
             name: kibana
             state: restarted
+    post_tasks:
+    -   name: start, enable kibana
+        service:
+            name: kibana
+            state: started
+            enabled: yes
+    -   name: prepare index pattern
+        retries: 10
+        delay: 3
+        register: out_post_index_pattern
+        until: out_post_index_pattern is succeeded
+        changed_when: out_post_index_pattern.status == 409
+        uri:
+            url: "http://{{ansible_host}}:5601/api/saved_objects/index-pattern/{{index_pattern_id}}"
+            body_format: json
+            body:
+                attributes:
+                    fields: "[]"
+                    timeFieldName": "@timestamp"
+                    title: "logs-*"
+            method: post
+            headers:
+                "kbn-xsrf": kibana
+            status_code:
+            -   200
+            -   409
+    -   debug:
+            msg: "{{out_post_index_pattern}}"
