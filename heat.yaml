@@ -1,13 +1,22 @@
 heat_template_version: 2018-08-31
 parameters:
-    network:
+# not giving a default for REQ.network causes horizon to show the error
+# "ERROR: The Parameter (REQ.network) was not provided."
+# instead of showing the parameters mask
+# It works as expected if the resource `_network` (with external_id
+# == REQ.network) is removed.
+# Still, it is necessary to infer the subnet for the loadbalancer
+    REQ.network:
         type: string
         constraints:
         -   custom_constraint: neutron.network
-    image:
+        default: ""
+
+    REQ.image:
         type: string
         constraints:
         -   custom_constraint: glance.image
+
     root_volume_size:
         type: number
         default: 10
@@ -47,7 +56,7 @@ parameters:
 resources:
     _network:
         type: OS::Neutron::Net
-        external_id: {get_param: network}
+        external_id: {get_param: REQ.network}
 
     dns_suffix:
         type: OS::Heat::Value
@@ -177,7 +186,7 @@ resources:
     kibana_port:
         type: OS::Neutron::Port
         properties:
-            network: {get_param: network}
+            network: {get_param: REQ.network}
             security_groups:
             -   {get_resource: kibana_security_group}
             dns_name: {get_attr: [kibana_name, value]}
@@ -192,7 +201,7 @@ resources:
     kibana_root_volume:
         type: OS::Cinder::Volume
         properties:
-            image: {get_param: image}
+            image: {get_param: REQ.image}
             size: {get_param: root_volume_size}
             volume_type: {get_param: root_volume_type}
 
@@ -204,11 +213,11 @@ resources:
                 type: OS::Heat::Stack
                 properties:
                     parameters:
-                        network: {get_param: network}
+                        network: {get_param: REQ.network}
                         keypair: {get_resource: keypair}
                         volume_type: {get_param: root_volume_type}
                         volume_size: {get_param: root_volume_size}
-                        image: {get_param: image}
+                        image: {get_param: REQ.image}
                         flavor: {get_param: flavor_rsyslog}
                         security_group: {get_resource: rsyslog_security_group}
                         pool: {get_resource: pool_rsyslog}
@@ -286,13 +295,13 @@ resources:
                 type: OS::Heat::Stack
                 properties:
                     parameters:
-                        network: {get_param: network}
+                        network: {get_param: REQ.network}
                         keypair: {get_resource: keypair}
                         volume_type: {get_param: root_volume_type}
                         volume_size: {get_param: root_volume_size}
                         data_volume_type: {get_param: elasticsearch_volume_type}
                         data_volume_size: {get_param: elasticsearch_volume_size}
-                        image: {get_param: image}
+                        image: {get_param: REQ.image}
                         flavor: {get_param: flavor_elasticsearch}
                         security_group: {get_resource: elasticsearch_security_group}
                     template: |
