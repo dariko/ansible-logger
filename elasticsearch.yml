@@ -16,7 +16,7 @@
             network.host: 0.0.0.0
             discovery.seed_hosts: "{{groups.elasticsearch}}"
             cluster.initial_master_nodes: "{{groups.elasticsearch}}"
-        es_config: "{{es_config_single_node is groups.elasticsearch.length == 1 else es_config_multiple_nodes}}"
+        es_config: "{{es_config_single_node if groups.elasticsearch.length == 1 else es_config_multiple_nodes}}"
     tasks:
     -   group:
             name: elasticsearch
