@@ -32,6 +32,7 @@
             state: started
             enabled: yes
     -   name: prepare index pattern
+        run_once: yes
         retries: 10
         delay: 3
         register: out_post_index_pattern
@@ -51,5 +52,23 @@
             status_code:
             -   200
             -   409
-    -   debug:
-            msg: "{{out_post_index_pattern}}"
+    -   name: get settings
+        uri:
+            url: "http://{{ansible_host}}:5601/api/kibana/settings"
+            body_format: json
+            method: GET
+            headers:
+                "kbn-xsrf": kibana
+        register: out_get_settings
+    -   name: configure default route
+        changed_when: true
+        when: out_get_settings.json.get('settings', {}).get('defaultRoute', {}).get('userValue', '') != "/app/discover"
+        uri:
+            url: "http://{{ansible_host}}:5601/api/kibana/settings"
+            body_format: json
+            method: POST
+            headers:
+                "kbn-xsrf": kibana
+            body:
+                changes:
+                    defaultRoute: "/app/discover"
