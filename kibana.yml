@@ -43,7 +43,7 @@
             body:
                 attributes:
                     fields: "[]"
-                    timeFieldName": "@timestamp"
+                    timeFieldName: "@timestamp"
                     title: "logs-*"
             method: post
             headers:
