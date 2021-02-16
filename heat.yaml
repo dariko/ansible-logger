@@ -35,7 +35,25 @@ parameters:
     deploy_version:
         type: string
         default: master
+
+    scale_rsyslog:
+        type: number
+        default: 1
+
 resources:
+    _network:
+        type: OS::Neutron::Net
+        external_id: {get_param: network}
+
+    dns_suffix:
+        type: OS::Heat::Value
+        properties:
+            value:
+                list_join:
+                -   ""
+                -   -   {get_attr: [_network, name]}
+                    -   .os.it3.ns.farm
+
     rsyslog_security_group:
         type: OS::Neutron::SecurityGroup
         properties:
@@ -86,18 +104,80 @@ resources:
                 remote_mode: remote_group_id
             -   protocol: icmp
 
+    loadbalancer:
+        type: OS::Octavia::LoadBalancer
+        properties:
+            vip_subnet: {get_attr: [_network, subnets, 0]}
+
+    listener_tcp80:
+        type: OS::Octavia::Listener
+        properties:
+            loadbalancer: {get_resource: loadbalancer}
+            protocol: TCP
+            protocol_port: 80
+
+    pool_kibana:
+        type: OS::Octavia::Pool
+        properties:
+            lb_algorithm: ROUND_ROBIN
+            listener: {get_resource: listener_tcp80}
+            protocol: TCP
+
+    pool_kibana_healthmonitor:
+        type: OS::Octavia::HealthMonitor
+        properties:
+            delay: 3
+            max_retries: 2
+            timeout: 2
+            type: TCP
+            pool: {get_resource: pool_kibana}
+
+    listener_udp514:
+        type: OS::Octavia::Listener
+        properties:
+            loadbalancer: {get_resource: loadbalancer}
+            protocol: UDP
+            protocol_port: 514
+
+    pool_rsyslog:
+        type: OS::Octavia::Pool
+        properties:
+            lb_algorithm: ROUND_ROBIN
+            listener: {get_resource: listener_udp514}
+            protocol: UDP
+
+    pool_rsyslog_healthmonitor:
+        type: OS::Octavia::HealthMonitor
+        properties:
+            delay: 3
+            max_retries: 2
+            timeout: 2
+            type: UDP-CONNECT
+            pool: {get_resource: pool_rsyslog}
+
     keypair:
         type: OS::Nova::KeyPair
         properties:
             save_private_key: yes
             name: {list_join: ["-", ["ansible-runner", {get_param: OS::stack_id}]]}
 
-    rsyslog_port:
-        type: OS::Neutron::Port
+    kibana_name:
+        type: OS::Heat::Value
         properties:
-            network: {get_param: network}
-            security_groups:
-            -   {get_resource: rsyslog_security_group}
+            value:
+                str_replace:
+                    template: kibana.stack_id
+                    params:
+                        stack_id: {get_param: OS::stack_id}
+
+    elasticsearch_name:
+        type: OS::Heat::Value
+        properties:
+            value:
+                str_replace:
+                    template: elasticsearch.stack_id
+                    params:
+                        stack_id: {get_param: OS::stack_id}
 
     kibana_port:
         type: OS::Neutron::Port
@@ -105,6 +185,14 @@ resources:
             network: {get_param: network}
             security_groups:
             -   {get_resource: kibana_security_group}
+            dns_name: {get_attr: [kibana_name, value]}
+
+    kibana_pool_member:
+        type: OS::Octavia::PoolMember
+        properties:
+            address: {get_attr: [kibana_port, fixed_ips, 0, ip_address]}
+            pool: {get_resource: pool_kibana}
+            protocol_port: 5601
 
     elasticsearch_port:
         type: OS::Neutron::Port
@@ -112,13 +200,7 @@ resources:
             network: {get_param: network}
             security_groups:
             -   {get_resource: elasticsearch_security_group}
-
-    rsyslog_root_volume:
-        type: OS::Cinder::Volume
-        properties:
-            image: {get_param: image}
-            size: {get_param: root_volume_size}
-            volume_type: {get_param: root_volume_type}
+            dns_name: {get_attr: [elasticsearch_name, value]}
 
     elasticsearch_root_volume:
         type: OS::Cinder::Volume
@@ -140,17 +222,87 @@ resources:
             size: {get_param: elasticsearch_volume_size}
             volume_type: {get_param: elasticsearch_volume_type}
 
-    rsyslog_server:
-        type: OS::Nova::Server
+    rsyslog_servers:
+        type: OS::Heat::ResourceGroup
         properties:
-            networks:
-            -   port: {get_resource: rsyslog_port}
-            block_device_mapping:
-            block_device_mapping_v2:
-            -   volume_id: {get_resource: rsyslog_root_volume}
-            flavor: {get_param: flavor_rsyslog}
-            user_data_format: SOFTWARE_CONFIG
-            key_name: {get_resource: keypair}
+            count: {get_param: scale_rsyslog}
+            resource_def:
+                type: OS::Heat::Stack
+                properties:
+                    parameters:
+                        network: {get_param: network}
+                        keypair: {get_resource: keypair}
+                        volume_type: {get_param: root_volume_type}
+                        volume_size: {get_param: root_volume_size}
+                        image: {get_param: image}
+                        flavor: {get_param: flavor_rsyslog}
+                        security_group: {get_resource: rsyslog_security_group}
+                        pool: {get_resource: pool_rsyslog}
+                    template: |
+                        heat_template_version: 2018-08-31
+                        parameters:
+                            image:
+                                type: string
+                            volume_type:
+                                type: string
+                            volume_size:
+                                type: string
+                            network:
+                                type: string
+                            flavor:
+                                type: string
+                            keypair:
+                                type: string
+                            security_group:
+                                type: string
+                            pool:
+                                type: string
+                        resources:
+                            name:
+                                type: OS::Heat::Value
+                                properties:
+                                    value:
+                                        str_replace:
+                                            template: rsyslog-%index%.stack_id
+                                            params:
+                                                stack_id: {get_param: OS::stack_id}
+                            pool_member:
+                                type: OS::Octavia::PoolMember
+                                properties:
+                                    address: {get_attr: [port, fixed_ips, 0, ip_address]}
+                                    pool: {get_param: pool}
+                                    protocol_port: 514
+                            port:
+                                type: OS::Neutron::Port
+                                properties:
+                                    network: {get_param: network}
+                                    security_groups:
+                                    -   {get_param: security_group}
+                                    dns_name: {get_attr: [name, value]}
+                            root_volume:
+                                type: OS::Cinder::Volume
+                                properties:
+                                    image: {get_param: image}
+                                    size: {get_param: volume_size}
+                                    volume_type: {get_param: volume_type}
+                            server:
+                                type: OS::Nova::Server
+                                properties:
+                                    networks:
+                                    -   port: {get_resource: port}
+                                    block_device_mapping_v2:
+                                    -   volume_id: {get_resource: root_volume}
+                                    name: {get_attr: [name, value]}
+                                    flavor: {get_param: flavor}
+                                    user_data_format: SOFTWARE_CONFIG
+                                    key_name: {get_param: keypair}
+                        outputs:
+                            name:
+                                value:
+                                    str_replace:
+                                        template: $name.$dns_suffix
+                                        params:
+                                            $name: {get_attr: [name, value]}
 
     elasticsearch_server:
         type: OS::Nova::Server
@@ -163,6 +315,7 @@ resources:
             flavor: {get_param: flavor_elasticsearch}
             user_data_format: SOFTWARE_CONFIG
             key_name: {get_resource: keypair}
+            name: {get_attr: [elasticsearch_name, value]}
 
     elasticsearch_data_volume_attachment:
         type: OS::Cinder::VolumeAttachment
@@ -181,6 +334,31 @@ resources:
             flavor: {get_param: flavor_kibana}
             user_data_format: SOFTWARE_CONFIG
             key_name: {get_resource: keypair}
+            name: {get_attr: [kibana_name, value]}
+
+    ansible_inventory:
+        type: OS::Heat::Value
+        properties:
+            value:
+                str_replace:
+                    params:
+                        $dns_suffix: {get_attr: [dns_suffix, value]}
+                    template:
+                        str_replace:
+                            params:
+                                $rsyslog_names:
+                                    list_join:
+                                    -   "\n"
+                                    -   {get_attr: [rsyslog_servers, outputs, name]}
+                                $kibana_name: {get_attr: [kibana_server, name]}
+                                $elasticsearch_name: {get_attr: [elasticsearch_server, name]}
+                            template: |
+                                [rsyslog]
+                                $rsyslog_names
+                                [kibana]
+                                $kibana_name.$dns_suffix
+                                [elasticsearch]
+                                $elasticsearch_name.$dns_suffix
 
     ansible_runner:
         type: Immobiliare::AnsibleRunner::v2
@@ -189,46 +367,19 @@ resources:
                 get_attr:
                 -   keypair
                 -   private_key
-            inventory: 
-                str_replace:
-                    params:
-                        $rsyslog_ip: {get_attr: [rsyslog_port, fixed_ips, 0, ip_address]}
-                        $kibana_ip: {get_attr: [kibana_port, fixed_ips, 0, ip_address]}
-                        $elasticsearch_ip: {get_attr: [elasticsearch_port, fixed_ips, 0, ip_address]}
-                    template: |   
-                        [rsyslog]
-                        rsyslog1 ansible_host=$rsyslog_ip
-                        [kibana]
-                        kibana1 ansible_host=$kibana_ip
-                        [elasticsearch]
-                        elasticsearch1 ansible_host=$elasticsearch_ip
+            inventory: {get_attr: [ansible_inventory, value]}
             repository_url: https://github.com/dariko/ansible-logger
             repository_version: {get_param: deploy_version}
             playbook_name: site.yml
+            groups:
+            -   rsyslog: {get_attr: rsyslog_servers, outputs, inventory}
 
 outputs:
     kibana_url:
         value:
             str_replace:
                 params:
-                    kibana_ip:
-                        get_attr:
-                        -   kibana_port
-                        -   fixed_ips
-                        -   0
-                        -   ip_address
-                template: http://kibana_ip:5601
-    kibana_address:
-        value:
-            get_attr:
-            -   kibana_port
-            -   fixed_ips
-            -   0
-            -   ip_address
+                    loadbalancer_vip: {get_attr: [loadbalancer, vip_address]}
+                template: http://loadbalancer_vip
     rsyslog_address:
-        value:
-            get_attr:
-            -   rsyslog_port
-            -   fixed_ips
-            -   0
-            -   ip_address
+        value: {get_attr: [loadbalancer, vip_address]}
