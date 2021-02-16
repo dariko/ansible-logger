@@ -57,3 +57,10 @@
             name: elasticsearch
             state: started
             enabled: yes
+    -   name: wait for node responsive and cluster green
+        retries: 60
+        delay: 5
+        until: out_wait_cluster_green.get('json',{}).get('status', '') == 'green'
+        register: out_wait_cluster_green
+        uri:
+            url: http://localhost:9200/_cluster/health
