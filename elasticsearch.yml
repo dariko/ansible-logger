@@ -53,7 +53,7 @@
             state: restarted
     post_tasks:
     -   name: start, enable elasticsearch
-    -   service:
+        service:
             name: elasticsearch
             state: started
             enabled: yes
