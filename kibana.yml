@@ -13,7 +13,7 @@
                 {% for h in groups.elasticsearch %}
                 {%   if out.append("http://%s:9200" % h)%}{% endif %}
                 {% endfor %}
-                {% out|to_json }}
+                {{ out|to_json }}
         copy:
             dest: /etc/kibana/kibana.yml
             content: |
