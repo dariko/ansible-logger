@@ -7,10 +7,17 @@
             dest: /opt/kibana-oss-7.10.2-amd64.deb
     -   apt:
             deb: /opt/kibana-oss-7.10.2-amd64.deb
-    -   copy:
+    -   vars:
+            elasticsearch_hosts_list: |
+                {% set out = [] %}
+                {% for h in groups.elasticsearch %}
+                {%   if out.append("http://%s:9200" % h)%}{% endif %}
+                {% endfor %}
+                {% out|to_json }}
+        copy:
             dest: /etc/kibana/kibana.yml
             content: |
-                elasticsearch.hosts: ["http://{{hostvars['elasticsearch1'].ansible_host}}:9200"]
+                elasticsearch.hosts: {{elasticsearch_hosts_list|to_json}}
                 server.host: "0.0.0.0"
         notify: restart kibana
     handlers:
