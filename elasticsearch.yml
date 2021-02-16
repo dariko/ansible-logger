@@ -1,5 +1,22 @@
 -   hosts: elasticsearch
     gather_facts: no
+    vars:
+        es_config_single_node:
+            path.data: /var/lib/elasticsearch
+            path.logs: /var/log/elasticsearch
+            cluster.name: logs
+            node.name: elasticsearch
+            network.host: 0.0.0.0
+            discovery.type: single-node
+        es_config_multiple_nodes:
+            path.data: /var/lib/elasticsearch
+            path.logs: /var/log/elasticsearch
+            cluster.name: logs
+            node.name: "{{inventory_hostname}}"
+            network.host: 0.0.0.0
+            discovery.seed_hosts: "{{groups.elasticsearch}}"
+            cluster.initial_master_nodes: "{{groups.elasticsearch}}"
+        es_config: "{{es_config_single_node if groups.elasticsearch.length == 1 else es_config_multiple_nodes}}"
     tasks:
     -   group:
             name: elasticsearch
@@ -27,13 +44,7 @@
             deb: /opt/elasticsearch-oss-7.10.2-amd64.deb
     -   copy:
             dest: /etc/elasticsearch/elasticsearch.yml
-            content:
-                path.data: /var/lib/elasticsearch
-                path.logs: /var/log/elasticsearch
-                cluster.name: logs
-                node.name: elasticsearch
-                network.host: 0.0.0.0
-                discovery.type: single-node
+            content: "{{es_config}}"
         notify: restart elasticsearch
     -   service:
             name: elasticsearch

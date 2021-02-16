@@ -40,6 +40,10 @@ parameters:
         type: number
         default: 1
 
+    scale_elasticsearch:
+        type: number
+        default: 1
+
 resources:
     _network:
         type: OS::Neutron::Net
@@ -170,15 +174,6 @@ resources:
                     params:
                         stack_id: {get_param: OS::stack_id}
 
-    elasticsearch_name:
-        type: OS::Heat::Value
-        properties:
-            value:
-                str_replace:
-                    template: elasticsearch.stack_id
-                    params:
-                        stack_id: {get_param: OS::stack_id}
-
     kibana_port:
         type: OS::Neutron::Port
         properties:
@@ -194,33 +189,12 @@ resources:
             pool: {get_resource: pool_kibana}
             protocol_port: 5601
 
-    elasticsearch_port:
-        type: OS::Neutron::Port
-        properties:
-            network: {get_param: network}
-            security_groups:
-            -   {get_resource: elasticsearch_security_group}
-            dns_name: {get_attr: [elasticsearch_name, value]}
-
-    elasticsearch_root_volume:
-        type: OS::Cinder::Volume
-        properties:
-            image: {get_param: image}
-            size: {get_param: root_volume_size}
-            volume_type: {get_param: root_volume_type}
-
     kibana_root_volume:
         type: OS::Cinder::Volume
         properties:
             image: {get_param: image}
             size: {get_param: root_volume_size}
             volume_type: {get_param: root_volume_type}
-
-    elasticsearch_data_volume:
-        type: OS::Cinder::Volume
-        properties:
-            size: {get_param: elasticsearch_volume_size}
-            volume_type: {get_param: elasticsearch_volume_type}
 
     rsyslog_servers:
         type: OS::Heat::ResourceGroup
@@ -304,25 +278,95 @@ resources:
                                         params:
                                             $name: {get_attr: [name, value]}
 
-    elasticsearch_server:
-        type: OS::Nova::Server
+    elasticsearch_servers:
+        type: OS::Heat::ResourceGroup
         properties:
-            networks:
-            -   port: {get_resource: elasticsearch_port}
-            block_device_mapping:
-            block_device_mapping_v2:
-            -   volume_id: {get_resource: elasticsearch_root_volume}
-            flavor: {get_param: flavor_elasticsearch}
-            user_data_format: SOFTWARE_CONFIG
-            key_name: {get_resource: keypair}
-            name: {get_attr: [elasticsearch_name, value]}
-
-    elasticsearch_data_volume_attachment:
-        type: OS::Cinder::VolumeAttachment
-        properties:
-            instance_uuid: {get_resource: elasticsearch_server}
-            volume_id: {get_resource: elasticsearch_data_volume}
-            mountpoint: /dev/vdb
+            count: {get_param: scale_elasticsearch}
+            resource_def:
+                type: OS::Heat::Stack
+                properties:
+                    parameters:
+                        network: {get_param: network}
+                        keypair: {get_resource: keypair}
+                        volume_type: {get_param: root_volume_type}
+                        volume_size: {get_param: root_volume_size}
+                        data_volume_type: {get_param: elasticsearch_volume_type}
+                        data_volume_size: {get_param: elasticsearch_volume_size}
+                        image: {get_param: image}
+                        flavor: {get_param: flavor_elasticsearch}
+                        security_group: {get_resource: elasticsearch_security_group}
+                    template: |
+                        heat_template_version: 2018-08-31
+                        parameters:
+                            image:
+                                type: string
+                            volume_type:
+                                type: string
+                            volume_size:
+                                type: string
+                            data_volume_type:
+                                type: string
+                            data_volume_size:
+                                type: string
+                            network:
+                                type: string
+                            flavor:
+                                type: string
+                            keypair:
+                                type: string
+                            security_group:
+                                type: string
+                        resources:
+                            name:
+                                type: OS::Heat::Value
+                                properties:
+                                    value:
+                                        str_replace:
+                                            template: elasticsearch-%index%.stack_id
+                                            params:
+                                                stack_id: {get_param: OS::stack_id}
+                            port:
+                                type: OS::Neutron::Port
+                                properties:
+                                    network: {get_param: network}
+                                    security_groups:
+                                    -   {get_param: security_group}
+                                    dns_name: {get_attr: [name, value]}
+                            root_volume:
+                                type: OS::Cinder::Volume
+                                properties:
+                                    image: {get_param: image}
+                                    size: {get_param: volume_size}
+                                    volume_type: {get_param: volume_type}
+                            data_volume:
+                                type: OS::Cinder::Volume
+                                properties:
+                                    size: {get_param: data_volume_size}
+                                    volume_type: {get_param: data_volume_type}
+                            data_volume_attachment:
+                                type: OS::Cinder::VolumeAttachment
+                                properties:
+                                    instance_uuid: {get_resource: server}
+                                    volume_id: {get_resource: data_volume}
+                                    mountpoint: /dev/vdb
+                            server:
+                                type: OS::Nova::Server
+                                properties:
+                                    networks:
+                                    -   port: {get_resource: port}
+                                    block_device_mapping_v2:
+                                    -   volume_id: {get_resource: root_volume}
+                                    name: {get_attr: [name, value]}
+                                    flavor: {get_param: flavor}
+                                    user_data_format: SOFTWARE_CONFIG
+                                    key_name: {get_param: keypair}
+                        outputs:
+                            name:
+                                value:
+                                    str_replace:
+                                        template: $name.$dns_suffix
+                                        params:
+                                            $name: {get_attr: [name, value]}
 
     kibana_server:
         type: OS::Nova::Server
@@ -350,15 +394,18 @@ resources:
                                     list_join:
                                     -   "\n"
                                     -   {get_attr: [rsyslog_servers, outputs, name]}
+                                $elasticsearch_names:
+                                    list_join:
+                                    -   "\n"
+                                    -   {get_attr: [elasticsearch_servers, outputs, name]}
                                 $kibana_name: {get_attr: [kibana_server, name]}
-                                $elasticsearch_name: {get_attr: [elasticsearch_server, name]}
                             template: |
                                 [rsyslog]
                                 $rsyslog_names
                                 [kibana]
                                 $kibana_name.$dns_suffix
                                 [elasticsearch]
-                                $elasticsearch_name.$dns_suffix
+                                $elasticsearch_names
 
     ansible_runner:
         type: Immobiliare::AnsibleRunner::v2
