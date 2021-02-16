@@ -37,7 +37,7 @@
                     action(
                         name="action_elasticsearch_logs"
                         type="omelasticsearch"
-                        server="{{hostvars['elasticsearch1'].ansible_host}}"
+                        server="{{groups['elasticsearch']|to_json}}"
                         serverport="9200"
                         template="elasticsearch_logs_template"
                         searchIndex="elasticsearch_index_template"
