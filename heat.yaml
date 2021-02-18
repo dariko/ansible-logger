@@ -53,6 +53,10 @@ parameters:
         type: number
         default: 1
 
+    scale_kibana:
+        type: number
+        default: 1
+
 resources:
     _network:
         type: OS::Neutron::Net
@@ -173,37 +177,6 @@ resources:
         properties:
             save_private_key: yes
             name: {list_join: ["-", ["ansible-runner", {get_param: OS::stack_id}]]}
-
-    kibana_name:
-        type: OS::Heat::Value
-        properties:
-            value:
-                str_replace:
-                    template: kibana.stack_id
-                    params:
-                        stack_id: {get_param: OS::stack_id}
-
-    kibana_port:
-        type: OS::Neutron::Port
-        properties:
-            network: {get_param: REQ.network}
-            security_groups:
-            -   {get_resource: kibana_security_group}
-            dns_name: {get_attr: [kibana_name, value]}
-
-    kibana_pool_member:
-        type: OS::Octavia::PoolMember
-        properties:
-            address: {get_attr: [kibana_port, fixed_ips, 0, ip_address]}
-            pool: {get_resource: pool_kibana}
-            protocol_port: 5601
-
-    kibana_root_volume:
-        type: OS::Cinder::Volume
-        properties:
-            image: {get_param: REQ.image}
-            size: {get_param: root_volume_size}
-            volume_type: {get_param: root_volume_type}
 
     rsyslog_servers:
         type: OS::Heat::ResourceGroup
@@ -377,17 +350,87 @@ resources:
                                         params:
                                             $name: {get_attr: [name, value]}
 
-    kibana_server:
-        type: OS::Nova::Server
+    kibana_servers:
+        type: OS::Heat::ResourceGroup
         properties:
-            networks:
-            -   port: {get_resource: kibana_port}
-            block_device_mapping_v2:
-            -   volume_id: {get_resource: kibana_root_volume}
-            flavor: {get_param: flavor_kibana}
-            user_data_format: SOFTWARE_CONFIG
-            key_name: {get_resource: keypair}
-            name: {get_attr: [kibana_name, value]}
+            count: {get_param: scale_kibana}
+            resource_def:
+                type: OS::Heat::Stack
+                properties:
+                    parameters:
+                        network: {get_param: REQ.network}
+                        keypair: {get_resource: keypair}
+                        volume_type: {get_param: root_volume_type}
+                        volume_size: {get_param: root_volume_size}
+                        image: {get_param: REQ.image}
+                        flavor: {get_param: flavor_kibana}
+                        security_group: {get_resource: kibana_security_group}
+                        pool: {get_resource: pool_kibana}
+                    template: |
+                        heat_template_version: 2018-08-31
+                        parameters:
+                            image:
+                                type: string
+                            volume_type:
+                                type: string
+                            volume_size:
+                                type: string
+                            network:
+                                type: string
+                            flavor:
+                                type: string
+                            keypair:
+                                type: string
+                            security_group:
+                                type: string
+                            pool:
+                                type: string
+                        resources:
+                            name:
+                                type: OS::Heat::Value
+                                properties:
+                                    value:
+                                        str_replace:
+                                            template: kibana-%index%.stack_id
+                                            params:
+                                                stack_id: {get_param: OS::stack_id}
+                            pool_member:
+                                type: OS::Octavia::PoolMember
+                                properties:
+                                    address: {get_attr: [port, fixed_ips, 0, ip_address]}
+                                    pool: {get_param: pool}
+                                    protocol_port: 5601
+                            port:
+                                type: OS::Neutron::Port
+                                properties:
+                                    network: {get_param: network}
+                                    security_groups:
+                                    -   {get_param: security_group}
+                                    dns_name: {get_attr: [name, value]}
+                            root_volume:
+                                type: OS::Cinder::Volume
+                                properties:
+                                    image: {get_param: image}
+                                    size: {get_param: volume_size}
+                                    volume_type: {get_param: volume_type}
+                            server:
+                                type: OS::Nova::Server
+                                properties:
+                                    networks:
+                                    -   port: {get_resource: port}
+                                    block_device_mapping_v2:
+                                    -   volume_id: {get_resource: root_volume}
+                                    name: {get_attr: [name, value]}
+                                    flavor: {get_param: flavor}
+                                    user_data_format: SOFTWARE_CONFIG
+                                    key_name: {get_param: keypair}
+                        outputs:
+                            name:
+                                value:
+                                    str_replace:
+                                        template: $name.$dns_suffix
+                                        params:
+                                            $name: {get_attr: [name, value]}
 
     ansible_inventory:
         type: OS::Heat::Value
@@ -407,12 +450,15 @@ resources:
                                     list_join:
                                     -   "\n"
                                     -   {get_attr: [elasticsearch_servers, outputs, name]}
-                                $kibana_name: {get_attr: [kibana_server, name]}
+                                $kibana_names:
+                                    list_join:
+                                    -   "\n"
+                                    -   {get_attr: [kibana_servers, outputs, name]}
                             template: |
                                 [rsyslog]
                                 $rsyslog_names
                                 [kibana]
-                                $kibana_name.$dns_suffix
+                                $kibana_names
                                 [elasticsearch]
                                 $elasticsearch_names
 
