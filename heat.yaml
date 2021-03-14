@@ -57,19 +57,14 @@ parameters:
         type: number
         default: 1
 
+    dns_suffix:
+        type: string
+        default: ".local"
+
 resources:
     _network:
         type: OS::Neutron::Net
         external_id: {get_param: REQ.network}
-
-    dns_suffix:
-        type: OS::Heat::Value
-        properties:
-            value:
-                list_join:
-                -   ""
-                -   -   {get_attr: [_network, name]}
-                    -   .os.it3.ns.farm
 
     rsyslog_security_group:
         type: OS::Neutron::SecurityGroup
@@ -194,6 +189,7 @@ resources:
                         flavor: {get_param: flavor_rsyslog}
                         security_group: {get_resource: rsyslog_security_group}
                         pool: {get_resource: pool_rsyslog}
+                        dns_suffix: {get_param: dns_suffix}
                     template: |
                         heat_template_version: 2018-08-31
                         parameters:
@@ -213,15 +209,17 @@ resources:
                                 type: string
                             pool:
                                 type: string
+                            dns_suffix:
+                                type: string
                         resources:
                             name:
                                 type: OS::Heat::Value
                                 properties:
                                     value:
                                         str_replace:
-                                            template: rsyslog-%index%.stack_id
+                                            template: rsyslog-%index%$dns_suffix
                                             params:
-                                                stack_id: {get_param: OS::stack_id}
+                                                $dns_suffix: {get_param: dns_suffix}
                             pool_member:
                                 type: OS::Octavia::PoolMember
                                 properties:
@@ -234,7 +232,6 @@ resources:
                                     network: {get_param: network}
                                     security_groups:
                                     -   {get_param: security_group}
-                                    dns_name: {get_attr: [name, value]}
                             root_volume:
                                 type: OS::Cinder::Volume
                                 properties:
@@ -254,11 +251,7 @@ resources:
                                     key_name: {get_param: keypair}
                         outputs:
                             name:
-                                value:
-                                    str_replace:
-                                        template: $name.$dns_suffix
-                                        params:
-                                            $name: {get_attr: [name, value]}
+                                value: {get_attr: [name, value]}
 
     elasticsearch_servers:
         type: OS::Heat::ResourceGroup
@@ -277,6 +270,7 @@ resources:
                         image: {get_param: REQ.image}
                         flavor: {get_param: flavor_elasticsearch}
                         security_group: {get_resource: elasticsearch_security_group}
+                        dns_suffix: {get_param: dns_suffix}
                     template: |
                         heat_template_version: 2018-08-31
                         parameters:
@@ -298,22 +292,23 @@ resources:
                                 type: string
                             security_group:
                                 type: string
+                            dns_suffix:
+                                type: string
                         resources:
                             name:
                                 type: OS::Heat::Value
                                 properties:
                                     value:
                                         str_replace:
-                                            template: elasticsearch-%index%.stack_id
+                                            template: elasticsearch-%index%$dns_suffix
                                             params:
-                                                stack_id: {get_param: OS::stack_id}
+                                                $dns_suffix: {get_param: dns_suffix}
                             port:
                                 type: OS::Neutron::Port
                                 properties:
                                     network: {get_param: network}
                                     security_groups:
                                     -   {get_param: security_group}
-                                    dns_name: {get_attr: [name, value]}
                             root_volume:
                                 type: OS::Cinder::Volume
                                 properties:
@@ -344,11 +339,7 @@ resources:
                                     key_name: {get_param: keypair}
                         outputs:
                             name:
-                                value:
-                                    str_replace:
-                                        template: $name.$dns_suffix
-                                        params:
-                                            $name: {get_attr: [name, value]}
+                                value: {get_attr: [name, value]}
 
     kibana_servers:
         type: OS::Heat::ResourceGroup
@@ -366,6 +357,7 @@ resources:
                         flavor: {get_param: flavor_kibana}
                         security_group: {get_resource: kibana_security_group}
                         pool: {get_resource: pool_kibana}
+                        dns_suffix: {get_param: dns_suffix}
                     template: |
                         heat_template_version: 2018-08-31
                         parameters:
@@ -385,15 +377,17 @@ resources:
                                 type: string
                             pool:
                                 type: string
+                            dns_suffix:
+                                type: string
                         resources:
                             name:
                                 type: OS::Heat::Value
                                 properties:
                                     value:
                                         str_replace:
-                                            template: kibana-%index%.stack_id
+                                            template: kibana-%index%$dns_suffix
                                             params:
-                                                stack_id: {get_param: OS::stack_id}
+                                                $dns_suffix: {get_param: dns_suffix}
                             pool_member:
                                 type: OS::Octavia::PoolMember
                                 properties:
@@ -406,7 +400,6 @@ resources:
                                     network: {get_param: network}
                                     security_groups:
                                     -   {get_param: security_group}
-                                    dns_name: {get_attr: [name, value]}
                             root_volume:
                                 type: OS::Cinder::Volume
                                 properties:
@@ -426,11 +419,7 @@ resources:
                                     key_name: {get_param: keypair}
                         outputs:
                             name:
-                                value:
-                                    str_replace:
-                                        template: $name.$dns_suffix
-                                        params:
-                                            $name: {get_attr: [name, value]}
+                                value: {get_attr: [name, value]}
 
     ansible_inventory:
         type: OS::Heat::Value
@@ -438,43 +427,43 @@ resources:
             value:
                 str_replace:
                     params:
-                        $dns_suffix: {get_attr: [dns_suffix, value]}
-                    template:
-                        str_replace:
-                            params:
-                                $rsyslog_names:
-                                    list_join:
-                                    -   "\n"
-                                    -   {get_attr: [rsyslog_servers, outputs, name]}
-                                $elasticsearch_names:
-                                    list_join:
-                                    -   "\n"
-                                    -   {get_attr: [elasticsearch_servers, outputs, name]}
-                                $kibana_names:
-                                    list_join:
-                                    -   "\n"
-                                    -   {get_attr: [kibana_servers, outputs, name]}
-                            template: |
-                                [rsyslog]
-                                $rsyslog_names
-                                [kibana]
-                                $kibana_names
-                                [elasticsearch]
-                                $elasticsearch_names
+                        $rsyslog_names:
+                            list_join:
+                            -   "\n"
+                            -   {get_attr: [rsyslog_servers, outputs, name]}
+                        $elasticsearch_names:
+                            list_join:
+                            -   "\n"
+                            -   {get_attr: [elasticsearch_servers, outputs, name]}
+                        $kibana_names:
+                            list_join:
+                            -   "\n"
+                            -   {get_attr: [kibana_servers, outputs, name]}
+                    template: |
+                        [rsyslog]
+                        $rsyslog_names
+                        [kibana]
+                        $kibana_names
+                        [elasticsearch]
+                        $elasticsearch_names
 
     ansible_runner:
-        type: Immobiliare::AnsibleRunner::v2
+        type: https://raw.githubusercontent.com/dariko/heat-ansible_runner/ec96c45b4aed7cabcf098bb0f44111811ff4fc45/cloudconfig.yaml
         properties:
             ssh_key:
                 get_attr:
                 -   keypair
                 -   private_key
+            image: {get_param: REQ.image}
+            hostname:
+                str_replace:
+                    template: ansible$dns_suffix
+                    params:
+                        $dns_suffix: {get_param: dns_suffix}
             inventory: {get_attr: [ansible_inventory, value]}
             repository_url: https://github.com/dariko/ansible-logger
             repository_version: {get_param: deploy_version}
             playbook_name: site.yml
-            groups:
-            -   rsyslog: {get_attr: rsyslog_servers, outputs, inventory}
 
 outputs:
     kibana_url:
