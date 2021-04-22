@@ -461,6 +461,7 @@ resources:
                     params:
                         $dns_suffix: {get_param: dns_suffix}
             inventory: {get_attr: [ansible_inventory, value]}
+            network: {get_param: REQ.network}
             repository_url: https://github.com/dariko/ansible-logger
             repository_version: {get_param: deploy_version}
             playbook_name: site.yml
